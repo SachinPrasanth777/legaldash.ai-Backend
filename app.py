@@ -15,10 +15,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 @app.get("/")
 async def index():
     return JSONResponse(
         content={"success": True, "message": "All Modules loaded successfully"}
     )
+
 
 app.include_router(router, prefix="/client")
