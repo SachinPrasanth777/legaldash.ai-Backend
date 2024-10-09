@@ -8,6 +8,7 @@ from minio.error import S3Error
 from utilities.minio import client
 from dotenv import load_dotenv
 from io import BytesIO
+from slugify import slugify
 import os
 
 router = APIRouter()
@@ -75,7 +76,7 @@ async def upload_file(client_id: str, file: UploadFile = File(...)):
     bucket_name = os.getenv("MINIO_BUCKET_NAME")
     try:
         content = await file.read()
-        file_name = file.filename
+        file_name = slugify(file.filename)
         file_data = BytesIO(content)
         client.put_object(
             bucket_name=bucket_name,
@@ -141,7 +142,7 @@ async def upload_file(client_id: str, file: UploadFile = File(...)):
     bucket_name = os.getenv("MINIO_BUCKET_NAME")
     try:
         content = await file.read()
-        file_name = file.filename
+        file_name = slugify(file.filename)
         file_data = BytesIO(content)
         client.put_object(
             bucket_name=bucket_name,
