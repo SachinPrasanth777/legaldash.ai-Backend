@@ -13,3 +13,4 @@ async def index():
         content={"success": True, "message": "All Modules loaded successfully"}
     )
 
+app.include_router(router, prefix="/client")

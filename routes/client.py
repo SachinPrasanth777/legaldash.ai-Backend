@@ -1,12 +1,12 @@
 from fastapi import HTTPException, APIRouter
-from utilities.response import Database
+from utilities.database import Database
 
 router=APIRouter()
 db = Database()
 
 @router.post("/")
 async def create_client(client_data: dict):
-    # Insert new client data
+    # Insert new  data
     result = db.clients.insert_one(client_data)
     if not result.acknowledged:
         raise HTTPException(status_code=500, detail="Failed to create client")
@@ -14,7 +14,6 @@ async def create_client(client_data: dict):
 
 @router.get("/{client_id}")
 async def read_client(client_id: str):
-    # Retrieve a client by ID
     client = db.clients.find_one({"_id": client_id})
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
