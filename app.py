@@ -1,8 +1,13 @@
 from fastapi import FastAPI
-from fastapi.responses import JSONResponse
+from utilities.response import JSONResponse
+from utilities.database import Database
 
 app = FastAPI()
+db = Database()
 
-@app.get('/')
+
+@app.get("/")
 async def index():
-    return JSONResponse({"success": True, "message": "All Modules loaded successfully"})
+    return JSONResponse(
+        content={"success": True, "message": "All Modules loaded successfully"}
+    )
