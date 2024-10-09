@@ -66,7 +66,7 @@ async def delete_client(client_id: str):
     return JSONResponse(content={"message": "Client deleted"})
 
 
-@router.post("/{client_id}/upload")
+@router.post("/{client_id}/nda/upload")
 async def upload_file(client_id: str, file: UploadFile = File(...)):
     try:
         client_id = ObjectId(client_id)
@@ -79,14 +79,21 @@ async def upload_file(client_id: str, file: UploadFile = File(...)):
         file_data = BytesIO(content)
         client.put_object(
             bucket_name=bucket_name,
-            object_name=f"{client_id}/{file_name}",
+            object_name=f"{client_id}/nda/{file_name}",
             data=file_data,
             length=len(content),
             content_type=file.content_type,
         )
         db.clients.update_one(
             {"_id": client_id},
-            {"$addToSet": {"documents": {"name": file_name, "path": f"{client_id}/{file_name}"}}}
+            {
+                "$addToSet": {
+                    "documents": {
+                        "name": file_name,
+                        "path": f"{client_id}/nda/{file_name}",
+                    }
+                }
+            },
         )
         return {"message": f"File '{file.filename}' uploaded successfully!"}
     except S3Error as err:
@@ -95,7 +102,7 @@ async def upload_file(client_id: str, file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail=f"File upload failed: {str(e)}")
 
 
-@router.get("/{client_id}/{file_name}")
+@router.get("/{client_id}/nda/{file_name}")
 async def download_file(client_id: str, file_name: str):
     try:
         client_id = ObjectId(client_id)
@@ -114,3 +121,47 @@ async def download_file(client_id: str, file_name: str):
         raise HTTPException(status_code=404, detail=f"File not found: {str(err)}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error retrieving file: {str(e)}")
+
+
+@router.get("/")
+async def read_clients():
+    clients = db.clients.find()
+    clients = [client for client in clients]
+    for client in clients:
+        client["_id"] = str(client["_id"])
+    return JSONResponse(content=clients)
+
+@router.post("/{client_id}/lawsuit/upload")
+async def upload_file(client_id: str, file: UploadFile = File(...)):
+    try:
+        client_id = ObjectId(client_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid client ID format")
+    bucket_name = os.getenv("MINIO_BUCKET_NAME")
+    try:
+        content = await file.read()
+        file_name = file.filename
+        file_data = BytesIO(content)
+        client.put_object(
+            bucket_name=bucket_name,
+            object_name=f"{client_id}/lawsuit/{file_name}",
+            data=file_data,
+            length=len(content),
+            content_type=file.content_type,
+        )
+        db.clients.update_one(
+            {"_id": client_id},
+            {
+                "$addToSet": {
+                    "documents": {
+                        "name": file_name,
+                        "path": f"{client_id}/lawsuit/{file_name}",
+                    }
+                }
+            },
+        )
+        return {"message": f"File '{file.filename}' uploaded successfully!"}
+    except S3Error as err:
+        raise HTTPException(status_code=500, detail=f"MinIO error: {err}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"File upload failed: {str(e)}")
