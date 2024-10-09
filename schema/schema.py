@@ -1,12 +1,19 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import List
+
 
 class CreateClient(BaseModel):
     name: str
-    userId: str
-    documents: List[str]
-    
+    description: str
+    documents: dict
+
+
 class CreateLawsuit(BaseModel):
-    client_id: str 
-    documents: List[str]
+    client_id: str
+    documents: dict
     response: str
+
+
+class UpdateClient(BaseModel):
+    name: str
+    description: str
