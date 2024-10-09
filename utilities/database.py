@@ -11,7 +11,9 @@ class Database:
         db_name, db_uri = os.getenv("DB_NAME"), os.getenv("DB_URI")
         self.client = MongoClient(db_uri, tlsCAFile=certifi.where())
         self.db = self.client[db_name]
-        self.subjects = self.db.subjects
+        self.clients = self.db.clients  
+        self.lawsuits = self.db.lawsuits  
+
 
     def __del__(self):
         self.client.close()
