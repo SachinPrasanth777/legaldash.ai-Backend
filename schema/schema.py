@@ -5,7 +5,7 @@ from typing import List
 class CreateClient(BaseModel):
     name: str
     description: str
-    documents: dict
+    documents: List
 
 
 class CreateLawsuit(BaseModel):

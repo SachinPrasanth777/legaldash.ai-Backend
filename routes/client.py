@@ -14,6 +14,7 @@ router = APIRouter()
 db = Database()
 load_dotenv()
 
+
 @router.post("/")
 async def create_client(clientData: CreateClient):
     result = db.clients.insert_one(clientData.dict())
@@ -65,8 +66,12 @@ async def delete_client(client_id: str):
     return JSONResponse(content={"message": "Client deleted"})
 
 
-@router.post("/upload")
-async def upload_file(file: UploadFile = File(...)):
+@router.post("/{client_id}/upload")
+async def upload_file(client_id: str, file: UploadFile = File(...)):
+    try:
+        client_id = ObjectId(client_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid client ID format")
     bucket_name = os.getenv("MINIO_BUCKET_NAME")
     try:
         content = await file.read()
@@ -74,10 +79,14 @@ async def upload_file(file: UploadFile = File(...)):
         file_data = BytesIO(content)
         client.put_object(
             bucket_name=bucket_name,
-            object_name=file_name,
+            object_name=f"{client_id}/{file_name}",
             data=file_data,
             length=len(content),
-            content_type=file.content_type
+            content_type=file.content_type,
+        )
+        db.clients.update_one(
+            {"_id": client_id},
+            {"$addToSet": {"documents": {"name": file_name, "path": f"{client_id}/{file_name}"}}}
         )
         return {"message": f"File '{file.filename}' uploaded successfully!"}
     except S3Error as err:
@@ -85,11 +94,23 @@ async def upload_file(file: UploadFile = File(...)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"File upload failed: {str(e)}")
 
-@router.get("/download/{file_name}")
-async def download_file(file_name: str):
-    bucket_name = os.getenv("MINIO_BUCKET_NAME")
+
+@router.get("/{client_id}/{file_name}")
+async def download_file(client_id: str, file_name: str):
     try:
-        data = client.get_object(bucket_name, file_name)
-        return StreamingResponse(data, media_type='application/octet-stream', headers={"Content-Disposition": f"attachment; filename={file_name}"})
+        client_id = ObjectId(client_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid client ID format")
+    bucket_name = os.getenv("MINIO_BUCKET_NAME")
+    object_name = f"{client_id}/{file_name}"
+    try:
+        data = client.get_object(bucket_name, object_name)
+        return StreamingResponse(
+            data,
+            media_type="application/octet-stream",
+            headers={"Content-Disposition": f"attachment; filename={file_name}"},
+        )
+    except S3Error as err:
+        raise HTTPException(status_code=404, detail=f"File not found: {str(err)}")
     except Exception as e:
-        raise HTTPException(status_code=404, detail=f"File not found: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error retrieving file: {str(e)}")
