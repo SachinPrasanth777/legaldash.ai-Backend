@@ -2,10 +2,18 @@ from fastapi import FastAPI
 from utilities.response import JSONResponse
 from utilities.database import Database
 from routes.client import router
+from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
 db = Database()
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 @app.get("/")
 async def index():
