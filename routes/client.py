@@ -1,12 +1,18 @@
-from fastapi import HTTPException, APIRouter
+from fastapi import HTTPException, APIRouter, UploadFile, File
+from fastapi.responses import StreamingResponse
 from utilities.database import Database
 from schema.schema import CreateClient, UpdateClient
 from utilities.response import JSONResponse
 from bson import ObjectId
+from minio.error import S3Error
+from utilities.minio import client
+from dotenv import load_dotenv
+from io import BytesIO
+import os
 
 router = APIRouter()
 db = Database()
-
+load_dotenv()
 
 @router.post("/")
 async def create_client(clientData: CreateClient):
@@ -57,3 +63,33 @@ async def delete_client(client_id: str):
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Client not found")
     return JSONResponse(content={"message": "Client deleted"})
+
+
+@router.post("/upload")
+async def upload_file(file: UploadFile = File(...)):
+    bucket_name = os.getenv("MINIO_BUCKET_NAME")
+    try:
+        content = await file.read()
+        file_name = file.filename
+        file_data = BytesIO(content)
+        client.put_object(
+            bucket_name=bucket_name,
+            object_name=file_name,
+            data=file_data,
+            length=len(content),
+            content_type=file.content_type
+        )
+        return {"message": f"File '{file.filename}' uploaded successfully!"}
+    except S3Error as err:
+        raise HTTPException(status_code=500, detail=f"MinIO error: {err}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"File upload failed: {str(e)}")
+
+@router.get("/download/{file_name}")
+async def download_file(file_name: str):
+    bucket_name = os.getenv("MINIO_BUCKET_NAME")
+    try:
+        data = client.get_object(bucket_name, file_name)
+        return StreamingResponse(data, media_type='application/octet-stream', headers={"Content-Disposition": f"attachment; filename={file_name}"})
+    except Exception as e:
+        raise HTTPException(status_code=404, detail=f"File not found: {str(e)}")

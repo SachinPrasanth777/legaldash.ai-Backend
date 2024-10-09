@@ -10,3 +10,7 @@ client = Minio(
     secret_key=os.getenv("MINIO_SECRET_KEY"),
     secure=False
 )
+
+bucketName=os.getenv("MINIO_BUCKET_NAME")
+if not client.bucket_exists(bucketName):
+    client.make_bucket(bucketName)

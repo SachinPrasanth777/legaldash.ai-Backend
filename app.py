@@ -3,7 +3,6 @@ from utilities.response import JSONResponse
 from utilities.database import Database
 from routes.client import router
 from fastapi.middleware.cors import CORSMiddleware
-from utilities.minio import Minio
 
 app = FastAPI()
 db = Database()
