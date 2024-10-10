@@ -9,7 +9,7 @@
 pip install -r requirements.txt
 ```
 ```
-uvicorn index:app --reload
+uvicorn app:app --reload
 ```
 
 ## Running the Docker Container
