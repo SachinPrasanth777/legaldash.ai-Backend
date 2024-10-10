@@ -190,3 +190,55 @@ async def download_file(client_id: str, slug: str):
         raise HTTPException(status_code=404, detail=f"File not found: {str(err)}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error retrieving file: {str(e)}")
+@router.delete("/{client_id}/nda/{slug}")
+async def delete_nda_file(client_id: str, slug: str):
+    try:
+        client_id = ObjectId(client_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid client ID format")
+
+    bucket_name = os.getenv("MINIO_BUCKET_NAME")
+    object_name = f"{client_id}/nda/{slug}"
+
+    try:
+        client.remove_object(bucket_name, object_name)
+    except S3Error as err:
+        raise HTTPException(status_code=500, detail=f"MinIO error: {str(err)}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error deleting file: {str(e)}")
+
+    result = db.clients.update_one(
+        {"_id": client_id},
+        {"$pull": {"documents": {"slug": slug}}},
+    )
+
+    if result.modified_count == 0:
+        raise HTTPException(status_code=404, detail="File not found in the database")
+
+    return JSONResponse(content={"message": f"File '{slug}' deleted successfully!"})
+@router.delete("/{client_id}/lawsuit/{slug}")
+async def delete_lawsuit_file(client_id: str, slug: str):
+    try:
+        client_id = ObjectId(client_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid client ID format")
+
+    bucket_name = os.getenv("MINIO_BUCKET_NAME")
+    object_name = f"{client_id}/lawsuit/{slug}"
+
+    try:
+        client.remove_object(bucket_name, object_name)
+    except S3Error as err:
+        raise HTTPException(status_code=500, detail=f"MinIO error: {str(err)}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error deleting file: {str(e)}")
+
+    result = db.clients.update_one(
+        {"_id": client_id},
+        {"$pull": {"documents": {"slug": slug}}},
+    )
+
+    if result.modified_count == 0:
+        raise HTTPException(status_code=404, detail="File not found in the database")
+
+    return JSONResponse(content={"message": f"File '{slug}' deleted successfully!"})
