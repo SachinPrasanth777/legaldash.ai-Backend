@@ -1,4 +1,3 @@
-# chat.py
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 from typing import Dict, List, Tuple
@@ -7,11 +6,12 @@ import re
 import os
 from dotenv import load_dotenv
 import PyPDF2
-import openai
+from openai import OpenAI
 from pydantic import BaseModel
 from utilities.minio import client  # Import the MinIO client
 from minio.error import S3Error
 import logging
+import json
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -27,7 +27,7 @@ def get_openai_api_key():
         raise ValueError("OPENAI_API_KEY environment variable is not set.")
     return api_key
 
-openai.api_key = get_openai_api_key()  # Initialize OpenAI API key
+openai_client = OpenAI(api_key=get_openai_api_key())
 
 def extract_text_from_pdf_bytes(pdf_bytes: BytesIO) -> str:
     try:
@@ -35,6 +35,7 @@ def extract_text_from_pdf_bytes(pdf_bytes: BytesIO) -> str:
         text = ""
         for page in reader.pages:
             text += page.extract_text()
+        logger.info(f"Extracted {len(text)} characters from PDF")
         return text
     except Exception as e:
         logger.error(f"Error extracting text from PDF: {str(e)}")
@@ -43,26 +44,37 @@ def extract_text_from_pdf_bytes(pdf_bytes: BytesIO) -> str:
 def extract_sections_from_sue_letter(sue_letter: str) -> List[str]:
     section_pattern = r"Section\s+(\d+)"
     sections = re.findall(section_pattern, sue_letter)
+    logger.info(f"Extracted sections from sue letter: {sections}")
     return sections
 
 def extract_section_from_nda(nda: str, section_number: str) -> str:
-    section_pattern = rf"Section\s+{section_number}[\s\S]+?(?=Section\s+\d+|\Z)"
+    section_pattern = rf"Section\s+{section_number}[\s\S]+?(?=Section|\Z)"
     match = re.search(section_pattern, nda)
     if match:
+        logger.info(f"Found content for Section {section_number}")
         return match.group(0)
-    return ""
+    else:
+        logger.info(f"No content found for Section {section_number}")
+        return ""
 
 def match_with_ipc(section_content: str) -> str:
-    prompt = (
-        f"Given the following section from an NDA, identify the most relevant section(s) of the Indian Penal Code (IPC) that could be applicable. "
-        f"Provide the IPC section number(s) and a brief explanation of why it's relevant:\n\nNDA Section: {section_content}\n\nRelevant IPC Section(s):"
-    )
+    prompt = f"""
+    Given the following section from an NDA, identify the most relevant section(s) 
+    of the Indian Penal Code (IPC) that could be applicable. Provide the IPC section 
+    number(s) and a brief explanation of why it's relevant:
+
+    NDA Section:
+    {section_content}
+
+    Relevant IPC Section(s):
+    """
+
     try:
-        response = openai.ChatCompletion.create(
+        response = openai_client.chat.completions.create(
             model="gpt-4",
             messages=[{"role": "user", "content": prompt}]
         )
-        return response.choices[0].message.content.strip()
+        return response.choices[0].message.content
     except Exception as e:
         logger.error(f"Error in OpenAI API call: {str(e)}")
         return ""
@@ -70,7 +82,9 @@ def match_with_ipc(section_content: str) -> str:
 def analyze_documents(sue_letter: str, nda: str) -> Dict[str, List[Tuple[str, str]]]:
     results = {}
     sections = extract_sections_from_sue_letter(sue_letter)
+    
     if not sections:
+        logger.warning("No sections found in the sue letter.")
         results["message"] = "No sections found in the sue letter."
         return results
 
@@ -78,15 +92,28 @@ def analyze_documents(sue_letter: str, nda: str) -> Dict[str, List[Tuple[str, st
         nda_section = extract_section_from_nda(nda, section)
         if nda_section:
             ipc_match = match_with_ipc(nda_section)
-            cleaned_nda_section = nda_section.replace('\n', ' ')
-            cleaned_ipc_match = ipc_match.replace('\n', ' ')
             results[section] = [
-                ("NDA Content", cleaned_nda_section),
-                ("IPC Match", cleaned_ipc_match)
+                ("NDA Content", nda_section),
+                ("IPC Match", ipc_match)
             ]
         else:
+            logger.warning(f"Section {section} not found in NDA.")
             results[section] = [("Error", f"Section {section} not found in NDA.")]
+    
     return results
+
+def clean_text(text):
+    return re.sub(r'(\n|\\n)', ' ', text)
+
+def clean_dict(d):
+    if isinstance(d, dict):
+        return {k: clean_dict(v) for k, v in d.items()}
+    elif isinstance(d, list):
+        return [clean_dict(v) for v in d]
+    elif isinstance(d, str):
+        return clean_text(d)
+    else:
+        return d
 
 # Define the Pydantic model for the request body
 class AnalyzeDocumentsMinioRequest(BaseModel):
@@ -142,4 +169,8 @@ async def analyze_documents_minio_endpoint(
         logger.error("No results generated from document analysis")
         raise HTTPException(status_code=500, detail="No results generated")
 
-    return JSONResponse(content=results)
+    # Clean and format results
+    clean_results = clean_dict(results)
+    json_results = json.dumps(clean_results, ensure_ascii=False, indent=2, separators=(',', ': '))
+
+    return JSONResponse(content=json.loads(json_results))
