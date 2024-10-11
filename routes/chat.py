@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, BackgroundTasks
 from fastapi.responses import JSONResponse
 from typing import Dict, List, Tuple
 from io import BytesIO
@@ -8,12 +8,13 @@ from dotenv import load_dotenv
 import PyPDF2
 from openai import OpenAI
 from pydantic import BaseModel
-from utilities.minio import client  # Import the MinIO client
+from utilities.minio import client
 from minio.error import S3Error
 import logging
 import json
+import asyncio
+import functools
 
-# Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -32,9 +33,7 @@ openai_client = OpenAI(api_key=get_openai_api_key())
 def extract_text_from_pdf_bytes(pdf_bytes: BytesIO) -> str:
     try:
         reader = PyPDF2.PdfReader(pdf_bytes)
-        text = ""
-        for page in reader.pages:
-            text += page.extract_text()
+        text = "".join(page.extract_text() for page in reader.pages)
         logger.info(f"Extracted {len(text)} characters from PDF")
         return text
     except Exception as e:
@@ -57,7 +56,7 @@ def extract_section_from_nda(nda: str, section_number: str) -> str:
         logger.info(f"No content found for Section {section_number}")
         return ""
 
-def match_with_ipc(section_content: str) -> str:
+async def match_with_ipc(section_content: str) -> str:
     prompt = f"""
     Given the following section from an NDA, identify the most relevant section(s) 
     of the Indian Penal Code (IPC) that could be applicable. Provide the IPC section 
@@ -68,18 +67,20 @@ def match_with_ipc(section_content: str) -> str:
 
     Relevant IPC Section(s):
     """
-
     try:
-        response = openai_client.chat.completions.create(
-            model="gpt-4",
-            messages=[{"role": "user", "content": prompt}]
+        response = await asyncio.to_thread(
+            functools.partial(
+                openai_client.chat.completions.create,
+                model="gpt-3.5-turbo",
+                messages=[{"role": "user", "content": prompt}]
+            )
         )
         return response.choices[0].message.content
     except Exception as e:
         logger.error(f"Error in OpenAI API call: {str(e)}")
         return ""
 
-def analyze_documents(sue_letter: str, nda: str) -> Dict[str, List[Tuple[str, str]]]:
+async def analyze_documents(sue_letter: str, nda: str) -> Dict[str, List[Tuple[str, str]]]:
     results = {}
     sections = extract_sections_from_sue_letter(sue_letter)
     
@@ -88,17 +89,24 @@ def analyze_documents(sue_letter: str, nda: str) -> Dict[str, List[Tuple[str, st
         results["message"] = "No sections found in the sue letter."
         return results
 
+    tasks = []
     for section in sections:
         nda_section = extract_section_from_nda(nda, section)
         if nda_section:
-            ipc_match = match_with_ipc(nda_section)
-            results[section] = [
-                ("NDA Content", nda_section),
-                ("IPC Match", ipc_match)
-            ]
+            task = asyncio.create_task(match_with_ipc(nda_section))
+            tasks.append((section, nda_section, task))
         else:
             logger.warning(f"Section {section} not found in NDA.")
             results[section] = [("Error", f"Section {section} not found in NDA.")]
+    
+    await asyncio.gather(*(task for _, _, task in tasks))
+    
+    for section, nda_section, task in tasks:
+        ipc_match = await task
+        results[section] = [
+            ("NDA Content", nda_section),
+            ("IPC Match", ipc_match)
+        ]
     
     return results
 
@@ -115,14 +123,14 @@ def clean_dict(d):
     else:
         return d
 
-# Define the Pydantic model for the request body
 class AnalyzeDocumentsMinioRequest(BaseModel):
     sue_letter_path: str
     nda_path: str
 
 @chat_router.post("/analyze-documents-minio")
 async def analyze_documents_minio_endpoint(
-    request: AnalyzeDocumentsMinioRequest
+    request: AnalyzeDocumentsMinioRequest,
+    background_tasks: BackgroundTasks
 ):
     logger.info("Received request for analyze_documents_minio_endpoint")
     sue_letter_path = request.sue_letter_path
@@ -132,18 +140,18 @@ async def analyze_documents_minio_endpoint(
     if not bucket_name:
         raise HTTPException(status_code=500, detail="MinIO bucket name is not configured")
 
-    # Retrieve files from MinIO
     try:
-        # Fetch sue_letter
-        sue_letter_data = client.get_object(bucket_name, sue_letter_path)
+        sue_letter_data, nda_data = await asyncio.gather(
+            asyncio.to_thread(client.get_object, bucket_name, sue_letter_path),
+            asyncio.to_thread(client.get_object, bucket_name, nda_path)
+        )
+        
         sue_letter_bytes = BytesIO(sue_letter_data.read())
-        sue_letter_data.close()
-        sue_letter_data.release_conn()
-
-        # Fetch NDA
-        nda_data = client.get_object(bucket_name, nda_path)
         nda_bytes = BytesIO(nda_data.read())
+        
+        sue_letter_data.close()
         nda_data.close()
+        sue_letter_data.release_conn()
         nda_data.release_conn()
     except S3Error as err:
         logger.error(f"MinIO S3Error: {str(err)}")
@@ -152,9 +160,10 @@ async def analyze_documents_minio_endpoint(
         logger.error(f"Error retrieving files from MinIO: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error retrieving files from MinIO: {str(e)}")
 
-    # Extract text from PDFs
-    sue_letter_text = extract_text_from_pdf_bytes(sue_letter_bytes)
-    nda_text = extract_text_from_pdf_bytes(nda_bytes)
+    sue_letter_text, nda_text = await asyncio.gather(
+        asyncio.to_thread(extract_text_from_pdf_bytes, sue_letter_bytes),
+        asyncio.to_thread(extract_text_from_pdf_bytes, nda_bytes)
+    )
 
     if not sue_letter_text or not nda_text:
         logger.error("Failed to extract text from one or both PDFs")
@@ -162,15 +171,16 @@ async def analyze_documents_minio_endpoint(
             status_code=400, detail="Failed to extract text from one or both PDFs"
         )
 
-    # Analyze documents
-    results = analyze_documents(sue_letter_text, nda_text)
+    results = await analyze_documents(sue_letter_text, nda_text)
 
     if not results:
         logger.error("No results generated from document analysis")
         raise HTTPException(status_code=500, detail="No results generated")
 
-    # Clean and format results
     clean_results = clean_dict(results)
     json_results = json.dumps(clean_results, ensure_ascii=False, indent=2, separators=(',', ': '))
+
+    background_tasks.add_task(sue_letter_bytes.close)
+    background_tasks.add_task(nda_bytes.close)
 
     return JSONResponse(content=json.loads(json_results))
