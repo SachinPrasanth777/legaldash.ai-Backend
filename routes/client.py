@@ -92,7 +92,7 @@ async def upload_file(client_id: str, file: UploadFile = File(...)):
                     "documents": {
                         "name": file_name,
                         "path": f"{client_id}/nda/{file_name}",
-                        "slug": file_name
+                        "slug": file_name,
                     }
                 }
             },
@@ -159,7 +159,7 @@ async def upload_file(client_id: str, file: UploadFile = File(...)):
                     "documents": {
                         "name": file_name,
                         "path": f"{client_id}/lawsuit/{file_name}",
-                        "slug": file_name
+                        "slug": file_name,
                     }
                 }
             },
@@ -190,6 +190,8 @@ async def download_file(client_id: str, slug: str):
         raise HTTPException(status_code=404, detail=f"File not found: {str(err)}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error retrieving file: {str(e)}")
+
+
 @router.delete("/{client_id}/nda/{slug}")
 async def delete_nda_file(client_id: str, slug: str):
     try:
@@ -216,6 +218,8 @@ async def delete_nda_file(client_id: str, slug: str):
         raise HTTPException(status_code=404, detail="File not found in the database")
 
     return JSONResponse(content={"message": f"File '{slug}' deleted successfully!"})
+
+
 @router.delete("/{client_id}/lawsuit/{slug}")
 async def delete_lawsuit_file(client_id: str, slug: str):
     try:
